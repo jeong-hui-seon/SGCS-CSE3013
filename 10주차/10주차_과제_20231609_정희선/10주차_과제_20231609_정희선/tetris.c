@@ -1,0 +1,876 @@
+#include "tetris.h"
+
+static struct sigaction act, oact;
+long memory_usage;
+static struct timeval start_time, end_time;
+
+void *tracked_malloc(size_t size) {
+    void *ptr = malloc(size);
+    if (ptr) {
+        memory_usage += size;
+    }
+    return ptr;
+}
+
+void tracked_free(void *ptr) {
+    free(ptr);
+}
+
+
+int main(){
+	int exit=0;
+	initscr();
+	noecho();
+	keypad(stdscr, TRUE);	
+	createRankList();
+	srand((unsigned int)time(NULL));
+	while(!exit){
+		clear();
+		switch(menu()){
+		case MENU_PLAY: play(); break;
+		case MENU_RANK: rank(); break;
+		case MENU_R_PLAY: recommendedPlay(); break;
+		case MENU_EXIT: exit=1; break;
+		default: break;
+		}
+	}
+	
+	endwin();
+	system("clear");
+	return 0;
+}
+RecNode* InitTree(){
+
+	recommendX=0 ;recommendY=0; recommendR=0;
+
+	RecNode* newTree = (RecNode*) tracked_malloc(sizeof(RecNode));
+
+	if (newTree == NULL) {
+    	printw("Memory allocation failed\n");
+    	refresh();
+    	return NULL; 
+	}
+	memcpy(newTree->f, field, sizeof(field));
+	newTree->score = 0;
+	newTree->lv = 1;
+
+	return newTree;
+}
+
+void InitTetris(){
+	int i,j;
+	memory_usage=0;
+
+	for(j=0;j<HEIGHT;j++)
+		for(i=0;i<WIDTH;i++)
+			field[j][i]=0;
+
+	nextBlock[0]=rand()%7;
+	nextBlock[1]=rand()%7;
+	nextBlock[2]=rand()%7;
+	blockRotate=0;
+	blockY=-1;
+	blockX=WIDTH/2-2;
+	score=0;	
+	gameOver=0;
+	timed_out=0;
+
+	recRoot = InitTree();
+	//modified_recommend(recRoot);
+	recommend(recRoot);
+
+	DrawOutline();
+	DrawField();
+	DrawBlockWithFeatures(blockY,blockX,nextBlock[0],blockRotate);
+	DrawNextBlock(nextBlock);
+	PrintScore(score);
+}
+
+void DrawOutline(){	
+	int i,j;
+	/* 블럭이 떨어지는 공간의 태두리를 그린다.*/
+	DrawBox(0,0,HEIGHT,WIDTH);
+
+	/* next block을 보여주는 공간의 태두리를 그린다.*/
+	move(2,WIDTH+10);
+	printw("NEXT BLOCK");
+	DrawBox(3,WIDTH+10,4,8);
+	DrawBox(9,WIDTH+10,4,8);
+
+	/* score를 보여주는 공간의 태두리를 그린다.*/
+	move(15,WIDTH+10);
+	printw("SCORE");
+	DrawBox(16,WIDTH+10,1,8);
+}
+
+int GetCommand(){
+	int command;
+	
+	command = wgetch(stdscr);
+	switch(command){
+	case KEY_UP:
+		break;
+	case KEY_DOWN:
+		break;
+	case KEY_LEFT:
+		break;
+	case KEY_RIGHT:
+		break;
+	case 'q':
+	case 'Q':
+		command = QUIT;
+		break;
+	default:
+		command = NOTHING;
+		break;
+	}
+	if(command != QUIT && rec_flag) return KEY_DOWN;
+	return command;
+}
+
+int ProcessCommand(int command){
+	int ret=1;
+	int drawFlag=0;
+	switch(command){
+	case QUIT:
+		ret = QUIT;
+		break;
+	case KEY_UP:
+		if((drawFlag = CheckToMove(field,nextBlock[0],(blockRotate+1)%4,blockY,blockX)))
+			blockRotate=(blockRotate+1)%4;
+		break;
+	case KEY_DOWN:
+		if((drawFlag = CheckToMove(field,nextBlock[0],blockRotate,blockY+1,blockX)))
+			blockY++;
+		break;
+	case KEY_RIGHT:
+		if((drawFlag = CheckToMove(field,nextBlock[0],blockRotate,blockY,blockX+1)))
+			blockX++;
+		break;
+	case KEY_LEFT:
+		if((drawFlag = CheckToMove(field,nextBlock[0],blockRotate,blockY,blockX-1)))
+			blockX--;
+		break;
+	default:
+		break;
+	}
+	if(drawFlag) DrawChange(field,command,nextBlock[0],blockRotate,blockY,blockX);
+	return ret;	
+}
+
+void DrawField(){
+	int i,j;
+	for(j=0;j<HEIGHT;j++){
+		move(j+1,1);
+		for(i=0;i<WIDTH;i++){
+			if(field[j][i]==1){
+				attron(A_REVERSE);
+				printw(" ");
+				attroff(A_REVERSE);
+			}
+			else printw(".");
+		}
+	}
+}
+
+
+void PrintScore(int score){
+	move(17,WIDTH+11);
+	printw("%8d",score);
+}
+
+void DrawNextBlock(int *nextBlock){
+	//DrawBox(3,WIDTH+10,4,8);
+	//DrawBox(9,WIDTH+10,4,8);
+	int i, j;
+	for( i = 0; i < 4; i++ ){
+		move(4+i,WIDTH+13);
+		for( j = 0; j < 4; j++ ){
+			if( block[nextBlock[1]][0][i][j] == 1 ){
+				attron(A_REVERSE);
+				printw(" ");
+				attroff(A_REVERSE);
+			}
+			else printw(" ");
+		}
+	}
+
+	for( i = 0; i < 4; i++ ){
+		move(10+i,WIDTH+13);
+		for( j = 0; j < 4; j++ ){
+			if( block[nextBlock[2]][0][i][j] == 1 ){
+				attron(A_REVERSE);
+				printw(" ");
+				attroff(A_REVERSE);
+			}
+			else printw(" ");
+		}
+	}
+}
+
+void DrawBlock(int y, int x, int blockID,int blockRotate,char tile){
+	int i,j;
+	for(i=0;i<4;i++)
+		for(j=0;j<4;j++){
+			if(block[blockID][blockRotate][i][j]==1 && i+y>=0){
+				move(i+y+1,j+x+1);
+				attron(A_REVERSE);
+				printw("%c",tile);
+				attroff(A_REVERSE);
+			}
+		}
+
+	move(HEIGHT,WIDTH+10);
+}
+
+void DrawBox(int y,int x, int height, int width){
+	int i,j;
+	move(y,x);
+	addch(ACS_ULCORNER);
+	for(i=0;i<width;i++)
+		addch(ACS_HLINE);
+	addch(ACS_URCORNER);
+	for(j=0;j<height;j++){
+		move(y+j+1,x);
+		addch(ACS_VLINE);
+		move(y+j+1,x+width+1);
+		addch(ACS_VLINE);
+	}
+	move(y+j+1,x);
+	addch(ACS_LLCORNER);
+	for(i=0;i<width;i++)
+		addch(ACS_HLINE);
+	addch(ACS_LRCORNER);
+}
+
+void play(){
+	gettimeofday(&start_time, NULL);
+	struct itimerval new_timer;
+
+	// 타이머 설정: 0.5초 간격
+	new_timer.it_interval.tv_sec = 0;  // 반복 간격 초 단위
+	new_timer.it_interval.tv_usec = 100000;  // 반복 간격 마이크로초 단위
+	new_timer.it_value.tv_sec = 0;  // 초기 간격 초 단위
+	new_timer.it_value.tv_usec = 100000;  // 초기 간격 마이크로초 단위
+
+	int command;
+	clear();
+	act.sa_handler = BlockDown;
+	sigaction(SIGALRM,&act,&oact);
+	InitTetris();
+	do{
+		if(timed_out==0){
+			if(rec_flag){
+				setitimer(ITIMER_REAL, &new_timer, NULL);
+			}
+			else{
+				alarm(1);
+			}
+			timed_out=1;
+		}
+		if(rec_flag){
+			if (recommendR != blockRotate) {
+				command = KEY_UP;
+			}
+			else if(recommendX < blockX){
+				command = KEY_LEFT;
+			}
+			else if(recommendX > blockX){
+				command = KEY_RIGHT;
+			}
+			else {
+				command = GetCommand();
+			}
+		}
+		else{
+			command = GetCommand();
+		}
+	
+		if(ProcessCommand(command)==QUIT){
+			alarm(0);
+			DrawBox(HEIGHT/2-1,WIDTH/2-5,1,10);
+			move(HEIGHT/2,WIDTH/2-4);
+			printw("Good-bye!!");
+			refresh();
+			getch();
+
+			return;
+		}
+	}while(!gameOver);
+
+	gettimeofday(&end_time, NULL);
+	double play_time = (end_time.tv_sec - start_time.tv_sec) + (end_time.tv_usec - start_time.tv_usec) / 1000000.0;
+	
+	alarm(0);
+	getch();
+	DrawBox(HEIGHT/2-1,WIDTH/2-5,1,10);
+	move(HEIGHT/2,WIDTH/2-4);
+	printw("GameOver!!");
+	refresh();
+	if(rec_flag){
+		move(3, WIDTH + 25);
+		printw("Play Time: %f seconds\n", play_time);
+		move(4, WIDTH + 25);
+		printw("Memory Usage: %ld bytes\n", memory_usage);
+		move(5, WIDTH + 25);
+		printw("Time Efficiency: %f\n", score / play_time);
+		move(6, WIDTH + 25);
+		printw("Space Efficiency: %f\n", (double)score / (memory_usage));
+		refresh();
+	}
+	getch();
+	newRank(score);
+
+}
+
+char menu(){
+	printw("1. play\n");
+	printw("2. rank\n");
+	printw("3. recommended play\n");
+	printw("4. exit\n");
+	return wgetch(stdscr);
+}
+
+/////////////////////////첫주차 실습에서 구현해야 할 함수/////////////////////////
+
+int CheckToMove(char f[HEIGHT][WIDTH],int currentBlock,int blockRotate, int blockY, int blockX){
+	// user code
+	for (int i=0 ; i<4; i++){
+		for (int j=0; j<4; j++){
+			if (block[currentBlock][blockRotate][i][j]==1){
+				if(i+blockY>=HEIGHT || i+blockY<0 || j+blockX>=WIDTH || j+blockX<0) return 0;
+				if (f[i+blockY][j+blockX]==1) return 0;
+			}
+		}
+	}
+	return 1;
+}
+
+void DrawChange(char f[HEIGHT][WIDTH],int command,int currentBlock,int blockRotate, int blockY, int blockX){
+	// user code
+
+	//1. 이전 블록 정보를 찾는다. ProcessCommand의 switch문을 참조할 것
+	int preblockRotate=blockRotate;
+	int preblockY=blockY;
+	int preblockX=blockX;
+
+	switch(command){
+	case KEY_UP:
+		preblockRotate=(blockRotate+3)%4;
+		break;
+	case KEY_DOWN:
+		preblockY=blockY-1;
+		break;
+	case KEY_RIGHT:
+		preblockX=blockX-1;
+		break;
+	case KEY_LEFT:
+		preblockX=blockX+1;
+		break;
+	}
+
+	int down = 0;
+    while (CheckToMove(field, currentBlock, preblockRotate, preblockY + down + 1, preblockX)) {
+        down++;
+    }
+    //down--;
+
+    int i, j;
+    for (i = 0; i < 4; i++) {
+        for (j = 0; j < 4; j++) {
+			if(block[currentBlock][preblockRotate][i][j]==1 && i + preblockY >= 0){
+				move(i + preblockY + down + 1, j + preblockX + 1);
+                printw("%c", '.');
+				move(i+preblockY+1,j+preblockX+1);
+				printw("%c",'.');
+			}
+            
+        }
+    }
+	
+	move(HEIGHT, WIDTH + 10);
+	//2. 이전 블록 정보를 지운다. DrawBlock함수 참조할 것.
+	
+	//3. 새로운 블록 정보를 그린다. 
+	DrawBlockWithFeatures(blockY, blockX, currentBlock,blockRotate);
+}
+
+void BlockDown(int sig){
+	// user code
+	int i,j;
+	//강의자료 p26-27의 플로우차트를 참고한다.
+	if(CheckToMove(field, nextBlock[0], blockRotate, blockY+1, blockX)){
+		blockY++;
+		int command = KEY_DOWN;
+		DrawChange(field, command, nextBlock[0], blockRotate, blockY, blockX);
+	}
+	else{
+		if(blockY == -1){
+			gameOver =TRUE;
+		}
+		else{
+			score += AddBlockToField(field, nextBlock[0], blockRotate, blockY, blockX);
+			score += DeleteLine(field);
+			for(int i=0; i<BLOCK_NUM-1; i++){
+				nextBlock[i]=nextBlock[i+1];
+			}
+			nextBlock[BLOCK_NUM-1]=rand()%7;
+
+			recRoot = InitTree();
+			//modified_recommend(recRoot);
+			recommend(recRoot);
+			blockY=-1;
+			blockX=WIDTH/2-2;
+			blockRotate=0;
+
+			PrintScore(score);
+			DrawNextBlock(nextBlock);
+			DrawField();
+		}
+	}
+	timed_out=0;
+}
+
+int AddBlockToField(char f[HEIGHT][WIDTH],int currentBlock,int blockRotate, int blockY, int blockX){
+	// user code
+	int touched=0;
+	//Block이 추가된 영역의 필드값을 바꾼다.
+	for (int i=0 ; i<4; i++){
+		for (int j=0; j<4; j++){
+			if (block[currentBlock][blockRotate][i][j]==1){
+				if(i+blockY+1 == 22) touched++;
+				else if(f[i+blockY+1][j+blockX]==1) touched++;
+				f[i+blockY][j+blockX]=1;
+			}
+		}
+	}
+	return touched * 10;
+}
+
+int DeleteLine(char f[HEIGHT][WIDTH]){
+	// user code
+	int lineflag;
+	int linenum=0;
+	int i,j,k;
+	//1. 필드를 탐색하여, 꽉 찬 구간이 있는지 탐색한다.
+	for (i=0 ; i<HEIGHT; i++){
+		lineflag=1;
+		for (j=0; j<WIDTH; j++){
+			if (f[i][j]==0){
+				lineflag=0;
+				break;
+			}
+		}
+		if(lineflag==1) {
+			linenum++;
+			for (k = i-1; k >= 0; k--) {
+                for (j=WIDTH; j > 0; j--) {
+                    f[k+1][j] = f[k][j];
+                }
+            }
+			for (j=WIDTH; j > 0; j--) {
+                f[0][j] = 0;
+            }
+			i--;
+        }
+	}
+	//2. 꽉 찬 구간이 있으면 해당 구간을 지운다. 즉, 해당 구간으로 필드값을 한칸씩 내린다.
+	return (linenum*linenum)*100;
+}
+
+///////////////////////////////////////////////////////////////////////////
+
+void DrawShadow(int y, int x, int blockID,int blockRotate){
+	// user code
+
+	int down=0;
+	while(CheckToMove(field, blockID, blockRotate, y+down+1, x)){
+		down++;
+	}
+	int i,j;
+	char tile = '/';
+	for(i=0;i<4;i++)
+		for(j=0;j<4;j++){
+			if(block[blockID][blockRotate][i][j]==1 && i+y>=0){
+				move(i+y+down+1,j+x+1);
+				attron(A_REVERSE);
+				printw("%c",tile);
+				attroff(A_REVERSE);
+			}
+		}
+
+	move(HEIGHT,WIDTH+10);
+}
+
+void DrawBlockWithFeatures(int y, int x, int blockID, int blockRotate){
+	DrawRecommend(recommendY, recommendX, blockID, recommendR);
+	DrawShadow(y, x, blockID, blockRotate);
+    DrawBlock(y, x, blockID, blockRotate, ' ');
+}
+
+void createRankList(){
+	// 목적: Input파일인 "rank.txt"에서 랭킹 정보를 읽어들임, 읽어들인 정보로 랭킹 목록 생성
+	// 1. "rank.txt"열기
+	// 2. 파일에서 랭킹정보 읽어오기
+	// 3. LinkedList로 저장
+	// 4. 파일 닫기
+	FILE *fp;
+	int i, j;
+
+	//1. 파일 열기
+	fp = fopen("rank.txt", "r");
+	if(fp == NULL) fp = fopen("rank.txt", "w");	
+	// 2. 정보읽어오기
+	/* int fscanf(FILE* stream, const char* format, ...);
+	stream:데이터를 읽어올 스트림의 FILE 객체를 가리키는 파일포인터
+	format: 형식지정자 등등
+	변수의 주소: 포인터
+	return: 성공할 경우, fscanf 함수는 읽어들인 데이터의 수를 리턴, 실패하면 EOF리턴 */
+	// EOF(End Of File): 실제로 이 값은 -1을 나타냄, EOF가 나타날때까지 입력받아오는 if문
+	fscanf(fp, "%d", &score_number);
+	char name[NAMELEN];
+	int score;
+	while(1){
+		if (fscanf(fp, "%s %d", name, &score) != EOF) {
+			Node *NewNode = (Node *)tracked_malloc(sizeof(Node));
+			NewNode->score = score;
+			strcpy(NewNode->name, name);
+			NewNode->link = NULL;
+
+			if (head == NULL || head->score <= score){
+				NewNode->link = head;
+				head = NewNode;
+			}
+			else {
+				Node *cur = head;
+				while (cur->link != NULL && cur->link->score > score){
+					cur = cur->link;
+				}
+				NewNode->link = cur->link;
+				cur->link = NewNode;
+			}
+		}
+		else {
+			break;
+		}
+	}
+	// 4. 파일닫기
+	fclose(fp);
+}
+
+void rank(){
+	//목적: rank 메뉴를 출력하고 점수 순으로 X부터~Y까지 출력함
+	//1. 문자열 초기화
+	int X=1, Y=score_number, ch, i, j;
+	clear();
+
+	//2. printw()로 3개의 메뉴출력
+	printw("1. list ranks from X to Y\n");
+	printw("2. list ranks by a specific name\n");
+	printw("3. delete a specific rank\n");
+	refresh();
+
+	//3. wgetch()를 사용하여 변수 ch에 입력받은 메뉴번호 저장
+	noecho();
+	ch = wgetch(stdscr);
+
+	//4. 각 메뉴에 따라 입력받을 값을 변수에 저장
+	//4-1. 메뉴1: X, Y를 입력받고 적절한 input인지 확인 후(X<=Y), X와 Y사이의 rank 출력
+	if (ch == '1') {
+		printw("X: "); echo();
+		scanw("%d", &X);
+		printw("Y: ");
+		scanw("%d", &Y);
+		noecho();
+		printw("       name       |    score    \n");
+		printw("--------------------------------\n");
+		if(X>Y || score_number == 0 || X>score_number || Y>score_number){
+			printw("search failure: no rank in the list\n");
+		}
+		else{
+			Node *tmp= head;
+			i=1;
+			while(1) {
+				if (i>Y) break;
+				if (X<=i && i<=Y){
+					//printw("%d", score_number); ->24출력
+					printw("%-18s|  %d\n", tmp->name, tmp->score);
+				}
+				tmp=tmp->link;
+				i++;
+			}
+		}
+	}
+
+	//4-2. 메뉴2: 문자열을 받아 저장된 이름과 비교하고 이름에 해당하는 리스트를 출력
+	else if ( ch == '2') {
+		char str[NAMELEN+1];
+		int check = 0;
+		echo();
+		printw("input the name: ");
+		scanw("%s", str);
+		noecho();
+		printw("       name       |    score    \n");
+		printw("--------------------------------\n");
+		Node *tmp= head;
+		while(tmp != NULL) {
+			if (strcmp(tmp->name, str) == 0){
+				printw("%-18s|  %d\n", tmp->name, tmp->score);
+				check=1;
+			}
+			tmp=tmp->link;
+		}
+		if (check==0) {
+			printw("\nsearch failure: no name in the list\n");
+		}
+	}
+
+	//4-3. 메뉴3: rank번호를 입력받아 리스트에서 삭제
+	else if ( ch == '3') {
+		int num;
+		echo();
+		printw("input the rank: ");
+		scanw("%d", &num);
+		noecho();
+		printw("\n");
+		Node *cur= head;
+		Node *prev= NULL;
+		if (0<num && num<=score_number){
+			for (j=1; j<num; j++){
+				prev=cur;
+				cur=cur->link;
+			}
+			if(prev==NULL){
+				head=cur->link;
+			}
+			else{
+				prev->link=cur->link;
+			}
+			tracked_free(cur);
+			score_number--;
+			writeRankFile();
+			printw("result: the rank deleted\n");
+		}
+		
+		else {
+			printw("search failure: the rank not in the list\n");
+		}
+	}
+	getch();	
+}
+
+void writeRankFile(){
+	// 목적: 추가된 랭킹 정보가 있으면 새로운 정보를 "rank.txt"에 쓰고 없으면 종료
+	int sn, i;
+	//1. "rank.txt" 연다
+	FILE *fp = fopen("rank.txt", "w");
+
+	//2. 랭킹 정보들의 수를 "rank.txt"에 기록
+	fprintf(fp, "%d\n", score_number);
+	//3. 탐색할 노드가 더 있는지 체크하고 있으면 다음 노드로 이동, 없으면 종료
+	sn=0;
+	if ( sn == score_number) return;
+	else {
+		Node* tmp = head;
+		while(tmp!=NULL){
+			fprintf(fp, "%s %d\n", tmp->name, tmp->score);
+			tmp=tmp->link;
+		}
+		sn++;
+	}
+fclose(fp);
+}
+
+void newRank(int score){
+	// 목적: GameOver시 호출되어 사용자 이름을 입력받고 score와 함께 리스트의 적절한 위치에 저장
+	char str[NAMELEN+1];
+	int i, j;
+	clear();
+	//1. 사용자 이름을 입력받음
+	printw("your name: "); echo();
+	
+	getnstr(str, NAMELEN);
+	if (str[0] == '\0') {
+        return; // 입력이 비어있다면 함수를 종료
+    }
+	//2. 새로운 노드를 생성해 이름과 점수를 저장, score_number가
+	Node *NewNode = (Node *)tracked_malloc(sizeof(Node));
+	NewNode->score = score;
+	strcpy(NewNode->name, str);
+	NewNode->link = NULL;
+
+	if (head == NULL || head->score <= score){
+			NewNode->link = head;
+			head = NewNode;
+	}
+	else {
+		Node *cur = head;
+		while (cur->link != NULL && cur->link->score > score){
+			cur = cur->link;
+		}
+		NewNode->link = cur->link;
+		cur->link = NewNode;
+	}
+	writeRankFile();
+}
+
+void DrawRecommend(int y, int x, int blockID,int blockRotate){
+	// user code
+	DrawBlock(y, x, blockID, blockRotate, 'R');
+}
+
+RecNode* MakeChildNode(RecNode *root){
+	RecNode *newchild = (RecNode*) tracked_malloc(sizeof(RecNode));
+	memcpy(newchild->f, root->f, sizeof(root->f));
+	newchild->lv = root->lv + 1; newchild->score = root->score;
+	return newchild;
+}
+
+void selectionSortDesc(RecNode **arr, int size){
+    int i, j, maxIdx;
+    RecNode *tmp;
+
+    for(i = 0; i < size - 1; i++) {
+        maxIdx = i;
+        for(j = i + 1; j < size; j++) {
+            if(arr[j]->score > arr[maxIdx]->score)
+                maxIdx = j;
+        }
+        tmp = arr[maxIdx];
+        arr[maxIdx] = arr[i];
+        arr[i] = tmp;
+    }
+}
+int recommend(RecNode *root){
+
+	int max=-1; //추천 배치를 고려한 최대 점수
+	int rotation;
+	int y;
+	int x;
+	int child_idx = 0;
+	int rot_i;
+
+	if(root->lv >= BLOCK_NUM) return 0;
+
+	root->c = (RecNode**) tracked_malloc(sizeof(RecNode*)*CHILDREN_MAX);
+
+	switch(nextBlock[root->lv]){
+	case 0:
+	case 5:
+	case 6: rotation =2; break;
+	case 1:
+	case 2:
+	case 3:	rotation = 4; break;
+	case 4: rotation = 1; break;
+	default: break;
+	}
+
+	for(rot_i = 0; rot_i<rotation; rot_i++) {
+		for(x=-2; x<=WIDTH; x++){
+			if (!CheckToMove(root->f, nextBlock[root->lv], rot_i, 0, x)) continue;
+			y=0;
+			while(y<HEIGHT){
+				if(CheckToMove(root->f, nextBlock[root->lv-1], rot_i, y, x)) y++;
+				else break;
+			}
+			y--;
+			if(y<0) continue;
+
+			RecNode * newchild = MakeChildNode(root);
+			newchild->score+=AddBlockToField(newchild->f, nextBlock[root->lv-1], rot_i, y, x);
+			newchild->score+=DeleteLine(newchild->f);
+
+			newchild->recBlockR = rot_i; newchild->recBlockX = x; newchild->recBlockY = y;
+			root->c[child_idx++] = newchild;
+		}
+	}
+	selectionSortDesc(root->c, child_idx);
+
+	for(int c = 0; c < child_idx; c++) {
+		if(root->lv < BLOCK_NUM) // 자식노드로 추천할 위치 계산하기
+			root->c[c]->score += recommend(root->c[c]);
+
+		if(root->c[c]->score > max) { // max 갱신
+			max = root->c[c]->score;
+			if(root->lv == 1) { // 재귀 끝나고 올라오면서 루트이면 recommend block  배치 정보 갱신
+				recommendR = root->c[c]->recBlockR; recommendX = root->c[c]->recBlockX; recommendY = root->c[c]->recBlockY;
+			}
+		}
+		tracked_free(root->c[c]);
+	}
+	tracked_free(root->c);
+	return max;
+}
+int modified_recommend(RecNode *root) {
+
+	int max=-1; //추천 배치를 고려한 최대 점수
+	int rotation;
+	int y;
+	int x;
+	int child_idx = 0;
+	int rot_i;
+
+	if(root->lv >= BLOCK_NUM) return 0;
+
+	root->c = (RecNode**) tracked_malloc(sizeof(RecNode*)*CHILDREN_MAX);
+
+	switch(nextBlock[root->lv]){
+	case 0:
+	case 5:
+	case 6: rotation =2; break;
+	case 1:
+	case 2:
+	case 3:	rotation = 4; break;
+	case 4: rotation = 1; break;
+	default: break;
+	}
+
+	for(rot_i = 0; rot_i<rotation; rot_i++) {
+		for(x=-2; x<=WIDTH; x++){
+			if (!CheckToMove(root->f, nextBlock[root->lv], rot_i, 0, x)) continue;
+			y=0;
+			while(y<HEIGHT){
+				if(CheckToMove(root->f, nextBlock[root->lv-1], rot_i, y, x)) y++;
+				else break;
+			}
+			y--;
+			if(y<0) continue;
+
+			RecNode * newchild = MakeChildNode(root);
+			newchild->score+=AddBlockToField(newchild->f, nextBlock[root->lv-1], rot_i, y, x);
+			newchild->score+=DeleteLine(newchild->f);
+
+			if(newchild->score > max - 10) { // 가지치기 조건, 현재 최고점보다 10점 이내면 탐색 계속
+                newchild->recBlockR = rot_i; newchild->recBlockX = x; newchild->recBlockY = y;
+                root->c[child_idx++] = newchild;
+            } else {
+                tracked_free(newchild); // 점수가 낮으면 메모리 해제 및 노드 무시
+            }
+		}
+	}
+	selectionSortDesc(root->c, child_idx);
+	// 가장 좋은 점수를 가진 자식 노드 탐색
+    for(int c = 0; c < child_idx; c++) {
+        int tempScore = modified_recommend(root->c[c]) + root->c[c]->score;
+        if(tempScore > max) {
+            max = tempScore;
+            if(root->lv == 1) {
+                recommendR = root->c[c]->recBlockR;
+                recommendX = root->c[c]->recBlockX;
+                recommendY = root->c[c]->recBlockY;
+            }
+        }
+        tracked_free(root->c[c]); // 자식 노드 메모리 해제
+    }
+    tracked_free(root->c);
+
+	return max;
+}
+
+void recommendedPlay(){
+
+	rec_flag=1;
+	play();
+	rec_flag=0;
+
+}
